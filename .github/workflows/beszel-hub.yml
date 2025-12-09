@@ -27,4 +27,4 @@ jobs:
           context: .
           file: internal/dockerfile_hub
           push: true
-          tags: GITCLOWN1/beszel:latest
+          tags: gitclown1/beszel:latest
