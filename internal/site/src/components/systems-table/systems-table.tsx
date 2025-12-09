@@ -14,7 +14,6 @@ import {
 	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table"
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
 import {
 	ArrowDownIcon,
 	ArrowUpDownIcon,
@@ -26,7 +25,7 @@ import {
 	Settings2Icon,
 	XIcon,
 } from "lucide-react"
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
 	DropdownMenu,
@@ -40,7 +39,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SystemStatus } from "@/lib/enums"
 import { $downSystems, $pausedSystems, $systems, $upSystems } from "@/lib/stores"
 import { cn, runOnce, useBrowserStorage } from "@/lib/utils"
@@ -331,58 +330,23 @@ export default function SystemsTable() {
 
 const AllSystemsTable = memo(
 	({ table, rows, colLength }: { table: TableType<SystemRecord>; rows: Row<SystemRecord>[]; colLength: number }) => {
-		// The virtualizer will need a reference to the scrollable container element
-		const scrollRef = useRef<HTMLDivElement>(null)
-
-		const virtualizer = useVirtualizer<HTMLDivElement, HTMLTableRowElement>({
-			count: rows.length,
-			estimateSize: () => (rows.length > 10 ? 56 : 60),
-			getScrollElement: () => scrollRef.current,
-			overscan: 5,
-		})
-		const virtualRows = virtualizer.getVirtualItems()
-
-		const paddingTop = Math.max(0, virtualRows[0]?.start ?? 0 - virtualizer.options.scrollMargin)
-		const paddingBottom = Math.max(0, virtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0))
-
 		return (
-			<div
-				className={cn(
-					"h-min max-h-[calc(100dvh-17rem)] max-w-full relative overflow-auto border rounded-md",
-					// don't set min height if there are less than 2 rows, do set if we need to display the empty state
-					(!rows.length || rows.length > 2) && "min-h-50"
-				)}
-				ref={scrollRef}
-			>
-				{/* add header height to table size */}
-				<div style={{ height: `${virtualizer.getTotalSize() + 50}px`, paddingTop, paddingBottom }}>
-					<table className="text-sm w-full h-full">
-						<SystemsTableHead table={table} />
-						<TableBody onMouseEnter={preloadSystemDetail}>
-							{rows.length ? (
-								virtualRows.map((virtualRow) => {
-									const row = rows[virtualRow.index] as Row<SystemRecord>
-									return (
-										<SystemTableRow
-											key={row.id}
-											row={row}
-											virtualRow={virtualRow}
-											length={rows.length}
-											colLength={colLength}
-										/>
-									)
-								})
-							) : (
-								<TableRow>
-									<TableCell colSpan={colLength} className="h-37 text-center pointer-events-none">
-										<Trans>No systems found.</Trans>
-									</TableCell>
-								</TableRow>
-							)}
-						</TableBody>
-					</table>
-				</div>
-			</div>
+			<Table className="w-full text-sm">
+				<SystemsTableHead table={table} />
+				<TableBody onMouseEnter={preloadSystemDetail}>
+					{rows.length ? (
+						rows.map((row) => (
+							<SystemTableRow key={row.id} row={row} length={rows.length} colLength={colLength} />
+						))
+					) : (
+						<TableRow>
+							<TableCell colSpan={colLength} className="h-24 text-center pointer-events-none">
+								<Trans>No systems found.</Trans>
+							</TableCell>
+						</TableRow>
+					)}
+				</TableBody>
+			</Table>
 		)
 	}
 )
@@ -407,22 +371,12 @@ function SystemsTableHead({ table }: { table: TableType<SystemRecord> }) {
 }
 
 const SystemTableRow = memo(
-	({
-		row,
-		virtualRow,
-		colLength,
-	}: {
-		row: Row<SystemRecord>
-		virtualRow: VirtualItem
-		length: number
-		colLength: number
-	}) => {
+	({ row, length, colLength }: { row: Row<SystemRecord>; length: number; colLength: number }) => {
 		const system = row.original
 		const { t } = useLingui()
 		return useMemo(() => {
 			return (
 				<TableRow
-					// data-state={row.getIsSelected() && "selected"}
 					className={cn("cursor-pointer transition-opacity relative safari:transform-3d", {
 						"opacity-50": system.status === SystemStatus.Paused,
 					})}
@@ -432,16 +386,15 @@ const SystemTableRow = memo(
 							key={cell.id}
 							style={{
 								width: cell.column.getSize(),
-								height: virtualRow.size,
 							}}
-							className="py-0"
+							className={cn("overflow-hidden relative", length > 10 ? "py-2" : "py-2.5")}
 						>
 							{flexRender(cell.column.columnDef.cell, cell.getContext())}
 						</TableCell>
 					))}
 				</TableRow>
 			)
-		}, [system, system.status, colLength, t])
+		}, [system, system.status, colLength, t, length])
 	}
 )
 
