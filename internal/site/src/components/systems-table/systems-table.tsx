@@ -333,21 +333,22 @@ const AllSystemsTable = memo(
 		const showActions = table.getColumn("actions")?.getIsVisible() ?? false
 		const tableColLength = Math.max(1, showActions ? colLength - 1 : colLength)
 		const rowGroups = useMemo(() => {
-			const groups = new Map<string, Row<SystemRecord>[]>()
+			const groups = new Map<string, { category: string; rows: Row<SystemRecord>[] }>()
 			for (const row of rows) {
 				const category = getSystemDisplayName(row.original.name).category
-				const groupRows = groups.get(category)
-				if (groupRows) {
-					groupRows.push(row)
+				const categoryKey = category.trim().toLocaleLowerCase()
+				const group = groups.get(categoryKey)
+				if (group) {
+					group.rows.push(row)
 				} else {
-					groups.set(category, [row])
+					groups.set(categoryKey, { category, rows: [row] })
 				}
 			}
 
-			return [...groups.entries()].sort(([categoryA], [categoryB]) => {
-				if (!categoryA) return -1
-				if (!categoryB) return 1
-				return categoryA.localeCompare(categoryB)
+			return [...groups.values()].sort((groupA, groupB) => {
+				if (!groupA.category) return -1
+				if (!groupB.category) return 1
+				return groupA.category.localeCompare(groupB.category)
 			})
 		}, [rows])
 
@@ -356,7 +357,7 @@ const AllSystemsTable = memo(
 				<SystemsTableHead table={table} />
 				<TableBody onMouseEnter={preloadSystemDetail}>
 					{rows.length ? (
-						rowGroups.map(([category, groupRows]) => {
+						rowGroups.map(({ category, rows: groupRows }) => {
 							return (
 								<Fragment key={category || "uncategorized"}>
 									{category && <SystemCategoryRow category={category} count={groupRows.length} colLength={tableColLength} />}
