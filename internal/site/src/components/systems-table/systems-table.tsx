@@ -59,10 +59,14 @@ function getCategoryKey(category: string) {
 		category
 			.normalize("NFKC")
 			.replace(/[\u200B-\u200D\uFEFF]/g, "")
-			.replace(/\s+/g, " ")
+			.replace(/[^\p{L}\p{N}]+/gu, " ")
 			.trim()
-			.toLocaleLowerCase() || "uncategorized"
+			.toLocaleLowerCase()
 	)
+}
+
+function getCategoryLabel(category: string) {
+	return getCategoryKey(category).toLocaleUpperCase()
 }
 
 export default function SystemsTable() {
@@ -343,39 +347,59 @@ const AllSystemsTable = memo(
 	({ table, rows, colLength }: { table: TableType<SystemRecord>; rows: Row<SystemRecord>[]; colLength: number }) => {
 		const showActions = table.getColumn("actions")?.getIsVisible() ?? false
 		const tableColLength = Math.max(1, showActions ? colLength - 1 : colLength)
-		const rowGroups = useMemo(() => {
-			const groups = new Map<string, { key: string; category: string; rows: Row<SystemRecord>[] }>()
+		const tableRows = (() => {
+			const groups = new Map<string, { label: string; rows: Row<SystemRecord>[] }>()
 			for (const row of rows) {
-				const category = getSystemDisplayName(row.original.name).category
-				const categoryKey = getCategoryKey(category)
+				const categoryLabel = getCategoryLabel(getSystemDisplayName(row.original.name).category)
+				const categoryKey = categoryLabel.toLocaleLowerCase()
 				const group = groups.get(categoryKey)
 				if (group) {
 					group.rows.push(row)
 				} else {
-					groups.set(categoryKey, { key: categoryKey, category, rows: [row] })
+					groups.set(categoryKey, { label: categoryLabel, rows: [row] })
 				}
 			}
 
-			return [...groups.values()].sort((groupA, groupB) => {
-				if (!groupA.category) return -1
-				if (!groupB.category) return 1
-				return groupA.category.localeCompare(groupB.category)
-			})
-		}, [rows])
+			return [...groups.entries()]
+				.sort(([keyA, groupA], [keyB, groupB]) => {
+					if (!keyA) return -1
+					if (!keyB) return 1
+					return groupA.label.localeCompare(groupB.label)
+				})
+				.flatMap(([key, group]) => {
+					const systemRows = group.rows.map((row) => ({ type: "system" as const, key: row.id, row }))
+					if (!group.label) {
+						return systemRows
+					}
+					return [
+						{
+							type: "category" as const,
+							key: `category-${key}`,
+							category: group.label,
+							count: group.rows.length,
+						},
+						...systemRows,
+					]
+				})
+		})()
 
 		return (
 			<Table className="w-full text-sm">
 				<SystemsTableHead table={table} />
 				<TableBody onMouseEnter={preloadSystemDetail}>
 					{rows.length ? (
-						rowGroups.flatMap(({ key, category, rows: groupRows }) => [
-							category ? (
-								<SystemCategoryRow key={`category-${key}`} category={category} count={groupRows.length} colLength={tableColLength} />
-							) : null,
-							...groupRows.map((row) => (
-								<SystemTableRow key={row.id} row={row} length={rows.length} colLength={colLength} />
-							)),
-						])
+						tableRows.map((tableRow) =>
+							tableRow.type === "category" ? (
+								<SystemCategoryRow
+									key={tableRow.key}
+									category={tableRow.category}
+									count={tableRow.count}
+									colLength={tableColLength}
+								/>
+							) : (
+								<SystemTableRow key={tableRow.key} row={tableRow.row} length={rows.length} colLength={colLength} />
+							)
+						)
 					) : (
 						<TableRow>
 							<TableCell colSpan={tableColLength} className="h-24 text-center pointer-events-none">
