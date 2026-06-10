@@ -25,7 +25,7 @@ import {
 	Settings2Icon,
 	XIcon,
 } from "lucide-react"
-import { Fragment, memo, useEffect, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
 	DropdownMenu,
@@ -53,6 +53,17 @@ type ViewMode = "table" | "grid"
 type StatusFilter = "all" | SystemRecord["status"]
 
 const preloadSystemDetail = runOnce(() => import("@/components/routes/system.tsx"))
+
+function getCategoryKey(category: string) {
+	return (
+		category
+			.normalize("NFKC")
+			.replace(/[\u200B-\u200D\uFEFF]/g, "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.toLocaleLowerCase() || "uncategorized"
+	)
+}
 
 export default function SystemsTable() {
 	const data = useStore($systems)
@@ -333,15 +344,15 @@ const AllSystemsTable = memo(
 		const showActions = table.getColumn("actions")?.getIsVisible() ?? false
 		const tableColLength = Math.max(1, showActions ? colLength - 1 : colLength)
 		const rowGroups = useMemo(() => {
-			const groups = new Map<string, { category: string; rows: Row<SystemRecord>[] }>()
+			const groups = new Map<string, { key: string; category: string; rows: Row<SystemRecord>[] }>()
 			for (const row of rows) {
 				const category = getSystemDisplayName(row.original.name).category
-				const categoryKey = category.trim().toLocaleLowerCase()
+				const categoryKey = getCategoryKey(category)
 				const group = groups.get(categoryKey)
 				if (group) {
 					group.rows.push(row)
 				} else {
-					groups.set(categoryKey, { category, rows: [row] })
+					groups.set(categoryKey, { key: categoryKey, category, rows: [row] })
 				}
 			}
 
@@ -357,16 +368,14 @@ const AllSystemsTable = memo(
 				<SystemsTableHead table={table} />
 				<TableBody onMouseEnter={preloadSystemDetail}>
 					{rows.length ? (
-						rowGroups.map(({ category, rows: groupRows }) => {
-							return (
-								<Fragment key={category || "uncategorized"}>
-									{category && <SystemCategoryRow category={category} count={groupRows.length} colLength={tableColLength} />}
-									{groupRows.map((row) => (
-										<SystemTableRow key={row.id} row={row} length={rows.length} colLength={colLength} />
-									))}
-								</Fragment>
-							)
-						})
+						rowGroups.flatMap(({ key, category, rows: groupRows }) => [
+							category ? (
+								<SystemCategoryRow key={`category-${key}`} category={category} count={groupRows.length} colLength={tableColLength} />
+							) : null,
+							...groupRows.map((row) => (
+								<SystemTableRow key={row.id} row={row} length={rows.length} colLength={colLength} />
+							)),
+						])
 					) : (
 						<TableRow>
 							<TableCell colSpan={tableColLength} className="h-24 text-center pointer-events-none">
