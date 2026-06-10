@@ -14,7 +14,6 @@ import {
 	useReactTable,
 	type VisibilityState,
 } from "@tanstack/react-table"
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
 import {
 	ArrowDownIcon,
 	ArrowUpDownIcon,
@@ -26,7 +25,7 @@ import {
 	Settings2Icon,
 	XIcon,
 } from "lucide-react"
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, memo, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
 	DropdownMenu,
@@ -40,7 +39,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { SystemStatus } from "@/lib/enums"
 import { $downSystems, $pausedSystems, $systems, $upSystems } from "@/lib/stores"
 import { cn, runOnce, useBrowserStorage } from "@/lib/utils"
@@ -48,7 +47,7 @@ import type { SystemRecord } from "@/types"
 import AlertButton from "../alerts/alert-button"
 import { $router, Link } from "../router"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card"
-import { SystemsTableColumns, ActionsButton, IndicatorDot } from "./systems-table-columns"
+import { SystemsTableColumns, ActionsButton, IndicatorDot, getSystemDisplayName } from "./systems-table-columns"
 
 type ViewMode = "table" | "grid"
 type StatusFilter = "all" | SystemRecord["status"]
@@ -134,8 +133,8 @@ export default function SystemsTable() {
 
 	const CardHead = useMemo(() => {
 		return (
-			<CardHeader className="p-0 mb-3 sm:mb-4">
-				<div className="grid md:flex gap-x-5 gap-y-3 w-full items-end">
+			<CardHeader className="pb-4.5 px-2 sm:px-6 max-sm:pt-5 max-sm:pb-1">
+				<div className="grid md:flex gap-5 w-full items-end">
 					<div className="px-2 sm:px-1">
 						<CardTitle className="mb-2">
 							<Trans>All Systems</Trans>
@@ -302,144 +301,159 @@ export default function SystemsTable() {
 	])
 
 	return (
-		<Card className="w-full px-3 py-5 sm:py-6 sm:px-6">
+		<Card>
 			{CardHead}
-			{viewMode === "table" ? (
-				// table layout
-				<div className="rounded-md">
-					<AllSystemsTable table={table} rows={rows} colLength={visibleColumns.length} />
-				</div>
-			) : (
-				// grid layout
-				<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-					{rows?.length ? (
-						rows.map((row) => {
-							return <SystemCard key={row.original.id} row={row} table={table} colLength={visibleColumns.length} />
-						})
-					) : (
-						<div className="col-span-full text-center py-8">
-							<Trans>No systems found.</Trans>
-						</div>
-					)}
-				</div>
-			)}
+			<div className="p-6 pt-0 max-sm:py-3 max-sm:px-2">
+				{viewMode === "table" ? (
+					// table layout
+					<div className="rounded-md">
+						<AllSystemsTable table={table} rows={rows} colLength={visibleColumns.length} />
+					</div>
+				) : (
+					// grid layout
+					<div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+						{rows?.length ? (
+							rows.map((row) => {
+								return <SystemCard key={row.original.id} row={row} table={table} colLength={visibleColumns.length} />
+							})
+						) : (
+							<div className="col-span-full text-center py-8">
+								<Trans>No systems found.</Trans>
+							</div>
+						)}
+					</div>
+				)}
+			</div>
 		</Card>
 	)
 }
 
 const AllSystemsTable = memo(
 	({ table, rows, colLength }: { table: TableType<SystemRecord>; rows: Row<SystemRecord>[]; colLength: number }) => {
-		// The virtualizer will need a reference to the scrollable container element
-		const scrollRef = useRef<HTMLDivElement>(null)
+		const showActions = table.getColumn("actions")?.getIsVisible() ?? false
+		const tableColLength = Math.max(1, showActions ? colLength - 1 : colLength)
+		const rowGroups = useMemo(() => {
+			const groups = new Map<string, Row<SystemRecord>[]>()
+			for (const row of rows) {
+				const category = getSystemDisplayName(row.original.name).category
+				const groupRows = groups.get(category)
+				if (groupRows) {
+					groupRows.push(row)
+				} else {
+					groups.set(category, [row])
+				}
+			}
 
-		const virtualizer = useVirtualizer<HTMLDivElement, HTMLTableRowElement>({
-			count: rows.length,
-			estimateSize: () => (rows.length > 10 ? 56 : 60),
-			getScrollElement: () => scrollRef.current,
-			overscan: 5,
-		})
-		const virtualRows = virtualizer.getVirtualItems()
-
-		const paddingTop = Math.max(0, virtualRows[0]?.start ?? 0 - virtualizer.options.scrollMargin)
-		const paddingBottom = Math.max(0, virtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0))
+			return [...groups.entries()].sort(([categoryA], [categoryB]) => {
+				if (!categoryA) return -1
+				if (!categoryB) return 1
+				return categoryA.localeCompare(categoryB)
+			})
+		}, [rows])
 
 		return (
-			<div
-				className={cn(
-					"h-min max-h-[calc(100dvh-17rem)] max-w-full relative overflow-auto border rounded-md",
-					// don't set min height if there are less than 2 rows, do set if we need to display the empty state
-					(!rows.length || rows.length > 2) && "min-h-50"
-				)}
-				ref={scrollRef}
-			>
-				{/* add header height to table size */}
-				<div style={{ height: `${virtualizer.getTotalSize() + 50}px`, paddingTop, paddingBottom }}>
-					<table className="text-sm w-full h-full">
-						<SystemsTableHead table={table} />
-						<TableBody onMouseEnter={preloadSystemDetail}>
-							{rows.length ? (
-								virtualRows.map((virtualRow) => {
-									const row = rows[virtualRow.index] as Row<SystemRecord>
-									return (
-										<SystemTableRow
-											key={row.id}
-											row={row}
-											virtualRow={virtualRow}
-											length={rows.length}
-											colLength={colLength}
-										/>
-									)
-								})
-							) : (
-								<TableRow>
-									<TableCell colSpan={colLength} className="h-37 text-center pointer-events-none">
-										<Trans>No systems found.</Trans>
-									</TableCell>
-								</TableRow>
-							)}
-						</TableBody>
-					</table>
-				</div>
-			</div>
+			<Table className="w-full text-sm">
+				<SystemsTableHead table={table} />
+				<TableBody onMouseEnter={preloadSystemDetail}>
+					{rows.length ? (
+						rowGroups.map(([category, groupRows]) => {
+							return (
+								<Fragment key={category || "uncategorized"}>
+									{category && <SystemCategoryRow category={category} count={groupRows.length} colLength={tableColLength} />}
+									{groupRows.map((row) => (
+										<SystemTableRow key={row.id} row={row} length={rows.length} colLength={colLength} />
+									))}
+								</Fragment>
+							)
+						})
+					) : (
+						<TableRow>
+							<TableCell colSpan={tableColLength} className="h-24 text-center pointer-events-none">
+								<Trans>No systems found.</Trans>
+							</TableCell>
+						</TableRow>
+					)}
+				</TableBody>
+			</Table>
 		)
 	}
 )
 
+function SystemCategoryRow({ category, count, colLength }: { category: string; count: number; colLength: number }) {
+	return (
+		<TableRow className="hover:bg-transparent">
+			<TableCell colSpan={colLength} className="h-7 py-1 px-2 border-b bg-muted/25 pointer-events-none">
+				<div className="flex items-center gap-2 text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+					<span>{category}</span>
+					<span className="rounded-full bg-background/80 px-1.5 py-0 text-[0.65rem] leading-4 tabular-nums">{count}</span>
+				</div>
+			</TableCell>
+		</TableRow>
+	)
+}
+
 function SystemsTableHead({ table }: { table: TableType<SystemRecord> }) {
-	const { t } = useLingui()
+	const showActions = table.getColumn("actions")?.getIsVisible() ?? false
 	return (
 		<TableHeader className="sticky top-0 z-50 w-full border-b-2">
-			{table.getHeaderGroups().map((headerGroup) => (
-				<tr key={headerGroup.id}>
-					{headerGroup.headers.map((header) => {
-						return (
-							<TableHead className="px-1.5" key={header.id}>
-								{flexRender(header.column.columnDef.header, header.getContext())}
-							</TableHead>
-						)
-					})}
-				</tr>
-			))}
+			{table.getHeaderGroups().map((headerGroup) => {
+				const headers = headerGroup.headers.filter((header) => header.column.id !== "actions")
+				return (
+					<tr key={headerGroup.id}>
+						{headers.map((header, index) => {
+							const isLast = index === headers.length - 1
+							return (
+								<TableHead className={cn("px-1.5", showActions && isLast && "pe-20")} key={header.id}>
+									{flexRender(header.column.columnDef.header, header.getContext())}
+								</TableHead>
+							)
+						})}
+					</tr>
+				)
+			})}
 		</TableHeader>
 	)
 }
 
 const SystemTableRow = memo(
-	({
-		row,
-		virtualRow,
-		colLength,
-	}: {
-		row: Row<SystemRecord>
-		virtualRow: VirtualItem
-		length: number
-		colLength: number
-	}) => {
+	({ row, length, colLength }: { row: Row<SystemRecord>; length: number; colLength: number }) => {
 		const system = row.original
 		const { t } = useLingui()
 		return useMemo(() => {
+			const cells = row.getVisibleCells().filter((cell) => cell.column.id !== "actions")
+			const actionsCell = row.getVisibleCells().find((cell) => cell.column.id === "actions")
 			return (
 				<TableRow
-					// data-state={row.getIsSelected() && "selected"}
-					className={cn("cursor-pointer transition-opacity relative safari:transform-3d", {
+					className={cn("group cursor-pointer transition-opacity relative safari:transform-3d", {
 						"opacity-50": system.status === SystemStatus.Paused,
 					})}
 				>
-					{row.getVisibleCells().map((cell) => (
-						<TableCell
-							key={cell.id}
-							style={{
-								width: cell.column.getSize(),
-								height: virtualRow.size,
-							}}
-							className="py-0 ps-4.5"
-						>
-							{flexRender(cell.column.columnDef.cell, cell.getContext())}
-						</TableCell>
-					))}
+					{cells.map((cell, index) => {
+						const isLast = index === cells.length - 1
+						return (
+							<TableCell
+								key={cell.id}
+								style={{
+									width: cell.column.getSize(),
+								}}
+								className={cn(
+									"overflow-hidden relative",
+									length > 10 ? "py-2" : "py-2.5",
+									actionsCell && isLast && "pe-20"
+								)}
+							>
+								{flexRender(cell.column.columnDef.cell, cell.getContext())}
+								{actionsCell && isLast && (
+									<div className="absolute right-2 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-background/85 px-0.5 shadow-sm backdrop-blur-sm">
+										{flexRender(actionsCell.column.columnDef.cell, actionsCell.getContext())}
+									</div>
+								)}
+							</TableCell>
+						)
+					})}
 				</TableRow>
 			)
-		}, [system, system.status, colLength, t])
+		}, [system, system.status, colLength, t, length, row])
 	}
 )
 
@@ -460,14 +474,14 @@ const SystemCard = memo(
 						}
 					)}
 				>
-					<CardHeader className="py-1 ps-4 pe-2 bg-muted/30 border-b border-border/60">
-						<div className="flex items-center gap-1 w-full overflow-hidden">
-							<h3 className="text-primary/90 min-w-0 flex-1 gap-2.5 font-semibold">
+					<CardHeader className="py-1 ps-5 pe-3 bg-muted/30 border-b border-border/60">
+						<div className="flex items-center gap-2 w-full overflow-hidden">
+							<CardTitle className="text-base tracking-normal text-primary/90 flex items-center min-w-0 flex-1 gap-2.5">
 								<div className="flex items-center gap-2.5 min-w-0 flex-1">
 									<IndicatorDot system={system} />
 									<span className="text-[.95em]/normal tracking-normal text-primary/90 truncate">{system.name}</span>
 								</div>
-							</h3>
+							</CardTitle>
 							{table.getColumn("actions")?.getIsVisible() && (
 								<div className="flex gap-1 shrink-0 relative z-10">
 									<AlertButton system={system} />
