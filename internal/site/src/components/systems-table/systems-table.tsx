@@ -47,27 +47,18 @@ import type { SystemRecord } from "@/types"
 import AlertButton from "../alerts/alert-button"
 import { $router, Link } from "../router"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card"
-import { SystemsTableColumns, ActionsButton, IndicatorDot, getSystemDisplayName } from "./systems-table-columns"
+import {
+	SystemsTableColumns,
+	ActionsButton,
+	IndicatorDot,
+	getSystemCategoryKey,
+	getSystemDisplayName,
+} from "./systems-table-columns"
 
 type ViewMode = "table" | "grid"
 type StatusFilter = "all" | SystemRecord["status"]
 
 const preloadSystemDetail = runOnce(() => import("@/components/routes/system.tsx"))
-
-function getCategoryKey(category: string) {
-	return (
-		category
-			.normalize("NFKC")
-			.replace(/[\u200B-\u200D\uFEFF]/g, "")
-			.replace(/[^\p{L}\p{N}]+/gu, " ")
-			.trim()
-			.toLocaleLowerCase()
-	)
-}
-
-function getCategoryLabel(category: string) {
-	return getCategoryKey(category).toLocaleUpperCase()
-}
 
 export default function SystemsTable() {
 	const data = useStore($systems)
@@ -114,20 +105,27 @@ export default function SystemsTable() {
 	}, [filter])
 
 	const columnDefs = useMemo(() => SystemsTableColumns(viewMode), [viewMode])
+	const tableSorting = useMemo<SortingState>(() => {
+		const userSorting = sorting.filter((sort) => sort.id !== "category")
+		return [{ id: "category", desc: false }, ...userSorting]
+	}, [sorting])
 
 	const table = useReactTable({
 		data: filteredData,
 		columns: columnDefs,
 		getCoreRowModel: getCoreRowModel(),
-		onSortingChange: setSorting,
+		onSortingChange: (updater) => {
+			const nextSorting = typeof updater === "function" ? updater(tableSorting) : updater
+			setSorting(nextSorting.filter((sort) => sort.id !== "category").slice(0, 1))
+		},
 		getSortedRowModel: getSortedRowModel(),
 		onColumnFiltersChange: setColumnFilters,
 		getFilteredRowModel: getFilteredRowModel(),
 		onColumnVisibilityChange: setColumnVisibility,
 		state: {
-			sorting,
+			sorting: tableSorting,
 			columnFilters,
-			columnVisibility,
+			columnVisibility: { ...columnVisibility, category: false },
 		},
 		defaultColumn: {
 			invertSorting: true,
@@ -245,6 +243,7 @@ export default function SystemsTable() {
 										<DropdownMenuSeparator />
 										<div className="px-1 pb-1">
 											{columns.map((column) => {
+												if (column.id === "category") return null
 												if (!column.getCanSort()) return null
 												let Icon = <span className="w-6"></span>
 												// if current sort column, show sort direction
@@ -350,8 +349,8 @@ const AllSystemsTable = memo(
 		const tableRows = (() => {
 			const groups = new Map<string, { label: string; rows: Row<SystemRecord>[] }>()
 			for (const row of rows) {
-				const categoryLabel = getCategoryLabel(getSystemDisplayName(row.original.name).category)
-				const categoryKey = categoryLabel.toLocaleLowerCase()
+				const categoryKey = getSystemCategoryKey(row.original.name)
+				const categoryLabel = categoryKey.toLocaleUpperCase()
 				const group = groups.get(categoryKey)
 				if (group) {
 					group.rows.push(row)
