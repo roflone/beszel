@@ -8,7 +8,6 @@ import type { ClassValue } from "clsx"
 import {
 	ArrowUpDownIcon,
 	ChevronRightSquareIcon,
-	ClockArrowUp,
 	CopyIcon,
 	CpuIcon,
 	HardDriveIcon,
@@ -33,8 +32,8 @@ import {
 	decimalString,
 	formatBytes,
 	formatTemperature,
+	getMeterState,
 	parseSemVer,
-	secondsToUptimeString,
 } from "@/lib/utils"
 import { batteryStateTranslations } from "@/lib/i18n"
 import type { SystemRecord } from "@/types"
@@ -80,8 +79,35 @@ const STATUS_COLORS = {
 	[SystemStatus.Pending]: "bg-yellow-500",
 } as const
 
-function getMeterStateByThresholds(value: number, warn = 65, crit = 90): MeterState {
-	return value >= crit ? MeterState.Crit : value >= warn ? MeterState.Warn : MeterState.Good
+export function getSystemDisplayName(name: string) {
+	const bracketMatch = name.match(/^\s*\[([^\]]+)\]\s*(.+)$/)
+	if (bracketMatch) {
+		const category = bracketMatch[1]?.trim()
+		const displayName = bracketMatch[2]?.trim()
+		if (category && displayName) {
+			return { category, name: displayName }
+		}
+	}
+
+	const slashMatch = name.match(/^\s*([^/]+?)\s*\/\s*(.+)$/)
+	if (slashMatch) {
+		const category = slashMatch[1]?.trim()
+		const displayName = slashMatch[2]?.trim()
+		if (category && displayName) {
+			return { category, name: displayName }
+		}
+	}
+
+	return { category: "", name }
+}
+
+export function getSystemCategoryKey(name: string) {
+	return getSystemDisplayName(name)
+		.category.normalize("NFKC")
+		.replace(/[\u200B-\u200D\uFEFF]/g, "")
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim()
+		.toLocaleLowerCase()
 }
 
 /**
@@ -90,6 +116,15 @@ function getMeterStateByThresholds(value: number, warn = 65, crit = 90): MeterSt
  */
 export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<SystemRecord>[] {
 	return [
+		{
+			id: "category",
+			accessorFn: ({ name }) => getSystemCategoryKey(name),
+			enableHiding: false,
+			enableSorting: true,
+			sortingFn: (a, b) => getSystemCategoryKey(a.original.name).localeCompare(getSystemCategoryKey(b.original.name)),
+			cell: () => null,
+			header: () => null,
+		},
 		{
 			// size: 200,
 			size: 100,
@@ -110,23 +145,20 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 
 				// match filter value against name or translated status
 				return (row, _, newFilterInput) => {
-					const sys = row.original
-					if (sys.host.includes(newFilterInput) || sys.info.v?.includes(newFilterInput)) {
-						return true
-					}
+					const { name, status } = row.original
 					if (newFilterInput !== filterInput) {
 						filterInput = newFilterInput
 						filterInputLower = newFilterInput.toLowerCase()
 					}
-					let nameLower = nameCache.get(sys.name)
+					let nameLower = nameCache.get(name)
 					if (nameLower === undefined) {
-						nameLower = sys.name.toLowerCase()
-						nameCache.set(sys.name, nameLower)
+						nameLower = name.toLowerCase()
+						nameCache.set(name, nameLower)
 					}
 					if (nameLower.includes(filterInputLower)) {
 						return true
 					}
-					const statusLower = statusTranslations[sys.status as keyof typeof statusTranslations]
+					const statusLower = statusTranslations[status as keyof typeof statusTranslations]
 					return statusLower?.includes(filterInputLower) || false
 				}
 			})(),
@@ -135,32 +167,22 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 			Icon: ServerIcon,
 			cell: (info) => {
 				const { name, id } = info.row.original
+				const displayName = getSystemDisplayName(name).name
 				const longestName = useStore($longestSystemNameLen)
-				const linkUrl = getPagePath($router, "system", { id })
-
 				return (
 					<>
 						<span className="flex gap-2 items-center font-medium text-sm text-nowrap md:ps-1">
 							<IndicatorDot system={info.row.original} />
-							<Link
-								href={linkUrl}
-								tabIndex={-1}
-								className="truncate z-10 relative"
-								style={{ width: `${longestName / 1.05}ch` }}
-								onMouseEnter={(e) => {
-									// set title on hover if text is truncated to show full name
-									const a = e.currentTarget
-									if (a.scrollWidth > a.clientWidth) {
-										a.title = name
-									} else {
-										a.removeAttribute("title")
-									}
-								}}
-							>
-								{name}
-							</Link>
+							{/* NOTE: change to 1 ch if switching to monospace font */}
+							<span className="truncate" style={{ width: `${longestName / 1.1}ch` }}>
+								{displayName}
+							</span>
 						</span>
-						<Link href={linkUrl} className="inset-0 absolute size-full" aria-label={name}></Link>
+						<Link
+							href={getPagePath($router, "system", { id })}
+							className="inset-0 absolute size-full"
+							aria-label={name}
+						></Link>
 					</>
 				)
 			},
@@ -187,8 +209,7 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 			accessorFn: ({ info }) => info.dp || undefined,
 			id: "disk",
 			name: () => t`Disk`,
-			cell: (info: CellContext<SystemRecord, unknown>) =>
-				info.row.original.info.efs ? DiskCellWithMultiple(info) : TableCellWithMeter(info),
+			cell: DiskCellWithMultiple,
 			Icon: HardDriveIcon,
 			header: sortableHeader,
 		},
@@ -202,24 +223,36 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 		},
 		{
 			id: "loadAverage",
-			accessorFn: ({ info }) => info.la?.reduce((acc, curr) => acc + curr, 0),
+			accessorFn: ({ info }) => {
+				const sum = info.la?.reduce((acc, curr) => acc + curr, 0)
+				// TODO: remove this in future release in favor of la array
+				if (!sum) {
+					return (info.l1 ?? 0) + (info.l5 ?? 0) + (info.l15 ?? 0) || undefined
+				}
+				return sum || undefined
+			},
 			name: () => t({ message: "Load Avg", comment: "Short label for load average" }),
 			size: 0,
 			Icon: HourglassIcon,
 			header: sortableHeader,
 			cell(info: CellContext<SystemRecord, unknown>) {
 				const { info: sysInfo, status } = info.row.original
-				const { major, minor } = parseSemVer(sysInfo.v)
-				const { colorWarn = 65, colorCrit = 90 } = useStore($userSettings, { keys: ["colorWarn", "colorCrit"] })
-				const loadAverages = sysInfo.la || []
+				// agent version
+				const { minor, patch } = parseSemVer(sysInfo.v)
+				let loadAverages = sysInfo.la
+
+				// use legacy load averages if agent version is less than 12.1.0
+				if (!loadAverages || (minor === 12 && patch < 1)) {
+					loadAverages = [sysInfo.l1 ?? 0, sysInfo.l5 ?? 0, sysInfo.l15 ?? 0]
+				}
 
 				const max = Math.max(...loadAverages)
-				if (max === 0 && (status === SystemStatus.Paused || (major < 1 && minor < 13))) {
+				if (max === 0 && (status === SystemStatus.Paused || minor < 12)) {
 					return null
 				}
 
 				const normalizedLoad = max / (sysInfo.t ?? 1)
-				const threshold = getMeterStateByThresholds(normalizedLoad * 100, colorWarn, colorCrit)
+				const threshold = getMeterState(normalizedLoad * 100)
 
 				return (
 					<div className="flex items-center gap-[.35em] w-full tabular-nums tracking-tight">
@@ -239,20 +272,19 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 			},
 		},
 		{
-			accessorFn: ({ info, status }) => (status !== SystemStatus.Up ? undefined : info.bb),
+			accessorFn: ({ info }) => info.bb || (info.b || 0) * 1024 * 1024 || undefined,
 			id: "net",
 			name: () => t`Net`,
 			size: 0,
 			Icon: EthernetIcon,
 			header: sortableHeader,
-			sortUndefined: "last",
 			cell(info) {
-				const val = info.getValue() as number | undefined
-				if (val === undefined) {
+				const sys = info.row.original
+				const userSettings = useStore($userSettings, { keys: ["unitNet"] })
+				if (sys.status === SystemStatus.Paused) {
 					return null
 				}
-				const userSettings = useStore($userSettings, { keys: ["unitNet"] })
-				const { value, unit } = formatBytes(val, true, userSettings.unitNet, false)
+				const { value, unit } = formatBytes((info.getValue() || 0) as number, true, userSettings.unitNet, false)
 				return (
 					<span className="tabular-nums whitespace-nowrap">
 						{decimalString(value, value >= 100 ? 1 : 2)} {unit}
@@ -296,12 +328,12 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 					return null
 				}
 
+				const iconColor = pct < 10 ? "text-red-500" : pct < 25 ? "text-yellow-500" : "text-muted-foreground"
+
 				let Icon = PlugChargingIcon
-				let iconColor = "text-muted-foreground"
 
 				if (state !== BatteryState.Charging) {
 					if (pct < 25) {
-						iconColor = pct < 11 ? "text-red-500" : "text-yellow-500"
 						Icon = BatteryLowIcon
 					} else if (pct < 75) {
 						Icon = BatteryMediumIcon
@@ -368,22 +400,6 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 			},
 		},
 		{
-			accessorFn: ({ info }) => info.u || undefined,
-			id: "uptime",
-			name: () => t`Uptime`,
-			size: 50,
-			Icon: ClockArrowUp,
-			header: sortableHeader,
-			hideSort: true,
-			cell(info) {
-				const uptime = info.getValue() as number
-				if (!uptime) {
-					return null
-				}
-				return <span className="tabular-nums whitespace-nowrap">{secondsToUptimeString(uptime)}</span>
-			},
-		},
-		{
 			accessorFn: ({ info }) => info.v,
 			id: "agent",
 			name: () => t`Agent`,
@@ -429,11 +445,12 @@ export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<Syste
 			id: "actions",
 			// @ts-expect-error
 			name: () => t({ message: "Actions", comment: "Table column" }),
-			size: 50,
+			size: 0,
+			enableSorting: false,
 			cell: ({ row }) => (
-				<div className="relative z-10 flex justify-end items-center gap-1 -ms-3">
-					<AlertButton system={row.original} />
-					<ActionsButton system={row.original} />
+				<div className="relative z-10 flex justify-end items-center gap-0.5">
+					<AlertButton system={row.original} className="size-8" />
+					<ActionsButton system={row.original} className="size-8" />
 				</div>
 			),
 		},
@@ -459,9 +476,8 @@ function sortableHeader(context: HeaderContext<SystemRecord, unknown>) {
 }
 
 function TableCellWithMeter(info: CellContext<SystemRecord, unknown>) {
-	const { colorWarn = 65, colorCrit = 90 } = useStore($userSettings, { keys: ["colorWarn", "colorCrit"] })
 	const val = Number(info.getValue()) || 0
-	const threshold = getMeterStateByThresholds(val, colorWarn, colorCrit)
+	const threshold = getMeterState(val)
 	const meterClass = cn(
 		"h-full",
 		(info.row.original.status !== SystemStatus.Up && STATUS_COLORS.paused) ||
@@ -480,16 +496,20 @@ function TableCellWithMeter(info: CellContext<SystemRecord, unknown>) {
 }
 
 function DiskCellWithMultiple(info: CellContext<SystemRecord, unknown>) {
-	const { colorWarn = 65, colorCrit = 90 } = useStore($userSettings, { keys: ["colorWarn", "colorCrit"] })
 	const { info: sysInfo, status, id } = info.row.original
 	const extraFs = Object.entries(sysInfo.efs ?? {})
+
+	if (extraFs.length === 0) {
+		return TableCellWithMeter(info)
+	}
+
 	const rootDiskPct = sysInfo.dp
 
 	// sort extra disks by percentage descending
 	extraFs.sort((a, b) => b[1] - a[1])
 
 	function getIndicatorColor(pct: number) {
-		const threshold = getMeterStateByThresholds(pct, colorWarn, colorCrit)
+		const threshold = getMeterState(pct)
 		return (
 			(status !== SystemStatus.Up && STATUS_COLORS.paused) ||
 			(threshold === MeterState.Good && STATUS_COLORS.up) ||
@@ -507,9 +527,7 @@ function DiskCellWithMultiple(info: CellContext<SystemRecord, unknown>) {
 	const extraDiskIndicators =
 		status !== SystemStatus.Up
 			? []
-			: [...new Set(extraFs.map(([, pct]) => getMeterStateByThresholds(pct, colorWarn, colorCrit)))]
-					.sort()
-					.map((state) => stateColors[state])
+			: [...new Set(extraFs.map(([, pct]) => getMeterState(pct)))].sort().map((state) => stateColors[state])
 
 	return (
 		<Tooltip>
@@ -582,7 +600,7 @@ export function IndicatorDot({ system, className }: { system: SystemRecord; clas
 	)
 }
 
-export const ActionsButton = memo(({ system }: { system: SystemRecord }) => {
+export const ActionsButton = memo(({ system, className }: { system: SystemRecord; className?: string }) => {
 	const [deleteOpen, setDeleteOpen] = useState(false)
 	const [editOpen, setEditOpen] = useState(false)
 	const editOpened = useRef(false)
@@ -594,7 +612,7 @@ export const ActionsButton = memo(({ system }: { system: SystemRecord }) => {
 			<>
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<Button variant="ghost" size={"icon"}>
+						<Button variant="ghost" size={"icon"} className={className}>
 							<span className="sr-only">
 								<Trans>Open menu</Trans>
 							</span>
@@ -681,5 +699,5 @@ export const ActionsButton = memo(({ system }: { system: SystemRecord }) => {
 				</AlertDialog>
 			</>
 		)
-	}, [id, status, host, name, system, t, deleteOpen, editOpen])
+	}, [id, status, host, name, system, t, deleteOpen, editOpen, className])
 })
