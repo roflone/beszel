@@ -495,22 +495,22 @@ function SystemCategoryRow({
 						<Button
 							type="button"
 							variant="outline"
-							size="icon"
-							className="size-6 border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
+							size="sm"
+							className="h-5 px-1.5 border-border/70 bg-background/80 text-[0.7rem] leading-none text-muted-foreground hover:text-foreground"
 							disabled={!canMoveUp}
 							onClick={() => onMove(categoryKey, -1)}
 						>
-							<ArrowUpIcon className="size-3.5" />
+							↑
 						</Button>
 						<Button
 							type="button"
 							variant="outline"
-							size="icon"
-							className="size-6 border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
+							size="sm"
+							className="h-5 px-1.5 border-border/70 bg-background/80 text-[0.7rem] leading-none text-muted-foreground hover:text-foreground"
 							disabled={!canMoveDown}
 							onClick={() => onMove(categoryKey, 1)}
 						>
-							<ArrowDownIcon className="size-3.5" />
+							↓
 						</Button>
 					</div>
 				</div>
