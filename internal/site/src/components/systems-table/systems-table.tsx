@@ -489,30 +489,30 @@ function SystemCategoryRow({
 		<TableRow className="hover:bg-transparent">
 			<TableCell colSpan={colLength} className="h-7 py-1 px-2 border-b bg-muted/25">
 				<div className="flex items-center gap-2 text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
-					<div className="flex items-center gap-0.5">
+					<span>{category}</span>
+					<span className="rounded-full bg-background/80 px-1.5 py-0 text-[0.65rem] leading-4 tabular-nums">{count}</span>
+					<div className="flex items-center gap-1">
 						<Button
 							type="button"
-							variant="ghost"
+							variant="outline"
 							size="icon"
-							className="size-5 text-muted-foreground"
+							className="size-6 border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
 							disabled={!canMoveUp}
 							onClick={() => onMove(categoryKey, -1)}
 						>
-							<ArrowUpIcon className="size-3" />
+							<ArrowUpIcon className="size-3.5" />
 						</Button>
 						<Button
 							type="button"
-							variant="ghost"
+							variant="outline"
 							size="icon"
-							className="size-5 text-muted-foreground"
+							className="size-6 border-border/70 bg-background/70 text-muted-foreground hover:text-foreground"
 							disabled={!canMoveDown}
 							onClick={() => onMove(categoryKey, 1)}
 						>
-							<ArrowDownIcon className="size-3" />
+							<ArrowDownIcon className="size-3.5" />
 						</Button>
 					</div>
-					<span>{category}</span>
-					<span className="rounded-full bg-background/80 px-1.5 py-0 text-[0.65rem] leading-4 tabular-nums">{count}</span>
 				</div>
 			</TableCell>
 		</TableRow>
