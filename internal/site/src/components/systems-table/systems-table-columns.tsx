@@ -32,7 +32,6 @@ import {
 	decimalString,
 	formatBytes,
 	formatTemperature,
-	getMeterState,
 	parseSemVer,
 } from "@/lib/utils"
 import { batteryStateTranslations } from "@/lib/i18n"
@@ -78,6 +77,17 @@ const STATUS_COLORS = {
 	[SystemStatus.Paused]: "bg-primary/40",
 	[SystemStatus.Pending]: "bg-yellow-500",
 } as const
+
+function getMeterState(value: number) {
+	const userSettings = $userSettings.get()
+	if (value >= (userSettings.colorCrit ?? 90)) {
+		return MeterState.Crit
+	}
+	if (value >= (userSettings.colorWarn ?? 65)) {
+		return MeterState.Warn
+	}
+	return MeterState.Good
+}
 
 export function getSystemDisplayName(name: string) {
 	const bracketMatch = name.match(/^\s*\[([^\]]+)\]\s*(.+)$/)
