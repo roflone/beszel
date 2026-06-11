@@ -117,15 +117,6 @@ export function getSystemCategoryKey(name: string) {
 export function SystemsTableColumns(viewMode: "table" | "grid"): ColumnDef<SystemRecord>[] {
 	return [
 		{
-			id: "category",
-			accessorFn: ({ name }) => getSystemCategoryKey(name),
-			enableHiding: false,
-			enableSorting: true,
-			sortingFn: (a, b) => getSystemCategoryKey(a.original.name).localeCompare(getSystemCategoryKey(b.original.name)),
-			cell: () => null,
-			header: () => null,
-		},
-		{
 			// size: 200,
 			size: 100,
 			minSize: 0,
