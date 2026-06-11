@@ -25,7 +25,7 @@ import {
 	Settings2Icon,
 	XIcon,
 } from "lucide-react"
-import { memo, useEffect, useMemo, useState } from "react"
+import { type Dispatch, memo, type SetStateAction, useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
 	DropdownMenu,
@@ -52,13 +52,22 @@ import {
 	ActionsButton,
 	IndicatorDot,
 	getSystemCategoryKey,
-	getSystemDisplayName,
 } from "./systems-table-columns"
 
 type ViewMode = "table" | "grid"
 type StatusFilter = "all" | SystemRecord["status"]
+type CategoryOrderSetter = Dispatch<SetStateAction<string[]>>
 
 const preloadSystemDetail = runOnce(() => import("@/components/routes/system.tsx"))
+
+function moveItem<T>(items: T[], fromIndex: number, toIndex: number) {
+	const nextItems = [...items]
+	const [item] = nextItems.splice(fromIndex, 1)
+	if (item !== undefined) {
+		nextItems.splice(toIndex, 0, item)
+	}
+	return nextItems
+}
 
 export default function SystemsTable() {
 	const data = useStore($systems)
@@ -75,6 +84,7 @@ export default function SystemsTable() {
 	)
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
 	const [columnVisibility, setColumnVisibility] = useBrowserStorage<VisibilityState>("cols", {})
+	const [categoryOrder, setCategoryOrder] = useBrowserStorage<string[]>("systemCategoryOrder", [])
 
 	const locale = i18n.locale
 
@@ -105,27 +115,20 @@ export default function SystemsTable() {
 	}, [filter])
 
 	const columnDefs = useMemo(() => SystemsTableColumns(viewMode), [viewMode])
-	const tableSorting = useMemo<SortingState>(() => {
-		const userSorting = sorting.filter((sort) => sort.id !== "category")
-		return [{ id: "category", desc: false }, ...userSorting]
-	}, [sorting])
 
 	const table = useReactTable({
 		data: filteredData,
 		columns: columnDefs,
 		getCoreRowModel: getCoreRowModel(),
-		onSortingChange: (updater) => {
-			const nextSorting = typeof updater === "function" ? updater(tableSorting) : updater
-			setSorting(nextSorting.filter((sort) => sort.id !== "category").slice(0, 1))
-		},
+		onSortingChange: setSorting,
 		getSortedRowModel: getSortedRowModel(),
 		onColumnFiltersChange: setColumnFilters,
 		getFilteredRowModel: getFilteredRowModel(),
 		onColumnVisibilityChange: setColumnVisibility,
 		state: {
-			sorting: tableSorting,
+			sorting,
 			columnFilters,
-			columnVisibility: { ...columnVisibility, category: false },
+			columnVisibility,
 		},
 		defaultColumn: {
 			invertSorting: true,
@@ -243,7 +246,6 @@ export default function SystemsTable() {
 										<DropdownMenuSeparator />
 										<div className="px-1 pb-1">
 											{columns.map((column) => {
-												if (column.id === "category") return null
 												if (!column.getCanSort()) return null
 												let Icon = <span className="w-6"></span>
 												// if current sort column, show sort direction
@@ -321,7 +323,13 @@ export default function SystemsTable() {
 				{viewMode === "table" ? (
 					// table layout
 					<div className="rounded-md">
-						<AllSystemsTable table={table} rows={rows} colLength={visibleColumns.length} />
+						<AllSystemsTable
+							table={table}
+							rows={rows}
+							colLength={visibleColumns.length}
+							categoryOrder={categoryOrder}
+							setCategoryOrder={setCategoryOrder}
+						/>
 					</div>
 				) : (
 					// grid layout
@@ -343,7 +351,19 @@ export default function SystemsTable() {
 }
 
 const AllSystemsTable = memo(
-	({ table, rows, colLength }: { table: TableType<SystemRecord>; rows: Row<SystemRecord>[]; colLength: number }) => {
+	({
+		table,
+		rows,
+		colLength,
+		categoryOrder,
+		setCategoryOrder,
+	}: {
+		table: TableType<SystemRecord>
+		rows: Row<SystemRecord>[]
+		colLength: number
+		categoryOrder: string[]
+		setCategoryOrder: CategoryOrderSetter
+	}) => {
 		const showActions = table.getColumn("actions")?.getIsVisible() ?? false
 		const tableColLength = Math.max(1, showActions ? colLength - 1 : colLength)
 		const tableRows = (() => {
@@ -359,28 +379,60 @@ const AllSystemsTable = memo(
 				}
 			}
 
-			return [...groups.entries()]
-				.sort(([keyA, groupA], [keyB, groupB]) => {
+			const orderIndex = new Map(categoryOrder.map((categoryKey, index) => [categoryKey, index]))
+
+			const orderedGroups = [...groups.entries()].sort(([keyA, groupA], [keyB, groupB]) => {
 					if (!keyA) return -1
 					if (!keyB) return 1
+					const orderA = orderIndex.get(keyA) ?? Number.POSITIVE_INFINITY
+					const orderB = orderIndex.get(keyB) ?? Number.POSITIVE_INFINITY
+					if (orderA !== orderB) {
+						return orderA - orderB
+					}
 					return groupA.label.localeCompare(groupB.label)
 				})
-				.flatMap(([key, group]) => {
+
+			const movableGroups = orderedGroups.filter(([key]) => key)
+			const movableGroupIndex = new Map(movableGroups.map(([key], index) => [key, index]))
+
+			return orderedGroups.flatMap(([key, group]) => {
 					const systemRows = group.rows.map((row) => ({ type: "system" as const, key: row.id, row }))
 					if (!group.label) {
 						return systemRows
 					}
+					const groupIndex = movableGroupIndex.get(key) ?? 0
 					return [
 						{
 							type: "category" as const,
 							key: `category-${key}`,
+							categoryKey: key,
 							category: group.label,
 							count: group.rows.length,
+							canMoveUp: groupIndex > 0,
+							canMoveDown: groupIndex < movableGroups.length - 1,
 						},
 						...systemRows,
 					]
 				})
 		})()
+
+		function moveCategory(categoryKey: string, direction: -1 | 1) {
+			const groupKeys = tableRows
+				.filter((tableRow) => tableRow.type === "category")
+				.map((tableRow) => tableRow.categoryKey)
+			setCategoryOrder((currentOrder) => {
+				const orderedKeys = [
+					...currentOrder.filter((key) => groupKeys.includes(key)),
+					...groupKeys.filter((key) => !currentOrder.includes(key)),
+				]
+				const currentIndex = orderedKeys.indexOf(categoryKey)
+				const nextIndex = currentIndex + direction
+				if (currentIndex < 0 || nextIndex < 0 || nextIndex >= orderedKeys.length) {
+					return orderedKeys
+				}
+				return moveItem(orderedKeys, currentIndex, nextIndex)
+			})
+		}
 
 		return (
 			<Table className="w-full text-sm">
@@ -391,9 +443,13 @@ const AllSystemsTable = memo(
 							tableRow.type === "category" ? (
 								<SystemCategoryRow
 									key={tableRow.key}
+									categoryKey={tableRow.categoryKey}
 									category={tableRow.category}
 									count={tableRow.count}
 									colLength={tableColLength}
+									canMoveUp={tableRow.canMoveUp}
+									canMoveDown={tableRow.canMoveDown}
+									onMove={moveCategory}
 								/>
 							) : (
 								<SystemTableRow key={tableRow.key} row={tableRow.row} length={rows.length} colLength={colLength} />
@@ -412,11 +468,49 @@ const AllSystemsTable = memo(
 	}
 )
 
-function SystemCategoryRow({ category, count, colLength }: { category: string; count: number; colLength: number }) {
+function SystemCategoryRow({
+	categoryKey,
+	category,
+	count,
+	colLength,
+	canMoveUp,
+	canMoveDown,
+	onMove,
+}: {
+	categoryKey: string
+	category: string
+	count: number
+	colLength: number
+	canMoveUp: boolean
+	canMoveDown: boolean
+	onMove: (categoryKey: string, direction: -1 | 1) => void
+}) {
 	return (
 		<TableRow className="hover:bg-transparent">
-			<TableCell colSpan={colLength} className="h-7 py-1 px-2 border-b bg-muted/25 pointer-events-none">
+			<TableCell colSpan={colLength} className="h-7 py-1 px-2 border-b bg-muted/25">
 				<div className="flex items-center gap-2 text-[0.7rem] font-medium uppercase tracking-wide text-muted-foreground">
+					<div className="flex items-center gap-0.5">
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-5 text-muted-foreground"
+							disabled={!canMoveUp}
+							onClick={() => onMove(categoryKey, -1)}
+						>
+							<ArrowUpIcon className="size-3" />
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-5 text-muted-foreground"
+							disabled={!canMoveDown}
+							onClick={() => onMove(categoryKey, 1)}
+						>
+							<ArrowDownIcon className="size-3" />
+						</Button>
+					</div>
 					<span>{category}</span>
 					<span className="rounded-full bg-background/80 px-1.5 py-0 text-[0.65rem] leading-4 tabular-nums">{count}</span>
 				</div>
